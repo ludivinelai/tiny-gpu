@@ -1,27 +1,19 @@
 /*
- * tiny-gpu 算子: 向量加法 / 点积 / ReLU / MatMul
- *
- * 这些是 "GPU kernel" 的等价物——在虚拟设备上运行的计算。
- * 目前由于 QEMU 设备只支持简单操作码，部分复杂算子分多次调用。
+ * tiny-gpu 算子实现
  */
 
-#include "tgpu_runtime.h"
+#include "operators.h"
 #include <math.h>
 #include <string.h>
 
-/* ── SGEMM: 朴素矩阵乘法 (C = A * B) ───────────── */
-
 #define MATMUL_TILE  16
 
-int tgpuSgemm(
+/* ── SGEMM ─────────────────────────────────────── */
+
+int tgpuKernelSgemm(
     const float *A, const float *B, float *C,
     int M, int N, int K)
 {
-    /* 朴素实现: C = A * B
-     *   A: M × K
-     *   B: K × N
-     *   C: M × N
-     */
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
             float sum = 0.0f;
@@ -34,9 +26,7 @@ int tgpuSgemm(
     return 0;
 }
 
-/* ── SGEMM tiled (分块, 模拟 GPU 上 tiling 策略) ── */
-
-int tgpuSgemmTiled(
+int tgpuKernelSgemmTiled(
     const float *A, const float *B, float *C,
     int M, int N, int K)
 {
@@ -46,7 +36,6 @@ int tgpuSgemmTiled(
         for (int jj = 0; jj < N; jj += MATMUL_TILE) {
             for (int kk = 0; kk < K; kk += MATMUL_TILE) {
 
-                /* 每个 tile 做一次小矩阵乘法 */
                 int i_max = (ii + MATMUL_TILE < M) ? ii + MATMUL_TILE : M;
                 int j_max = (jj + MATMUL_TILE < N) ? jj + MATMUL_TILE : N;
                 int k_max = (kk + MATMUL_TILE < K) ? kk + MATMUL_TILE : K;
@@ -66,9 +55,9 @@ int tgpuSgemmTiled(
     return 0;
 }
 
-/* ── ReLU ──────────────────────────────────────── */
+/* ── 激活函数 ───────────────────────────────────── */
 
-int tgpuReLU(float *data, int count)
+int tgpuKernelReLU(float *data, int count)
 {
     for (int i = 0; i < count; i++) {
         if (data[i] < 0.0f)
@@ -77,25 +66,19 @@ int tgpuReLU(float *data, int count)
     return 0;
 }
 
-/* ── Softmax ───────────────────────────────────── */
-
-int tgpuSoftmax(float *data, int count)
+int tgpuKernelSoftmax(float *data, int count)
 {
-    /* 找最大值 (numerical stability) */
     float max_val = data[0];
     for (int i = 1; i < count; i++) {
-        if (data[i] > max_val)
-            max_val = data[i];
+        if (data[i] > max_val) max_val = data[i];
     }
 
-    /* exp(x_i - max) */
     float sum = 0.0f;
     for (int i = 0; i < count; i++) {
         data[i] = expf(data[i] - max_val);
         sum += data[i];
     }
 
-    /* 归一化 */
     for (int i = 0; i < count; i++) {
         data[i] /= sum;
     }
@@ -103,17 +86,18 @@ int tgpuSoftmax(float *data, int count)
     return 0;
 }
 
-/* ── 向量加法 (通过 QEMU 设备) ─────────────────── */
+/* ── 向量运算 ───────────────────────────────────── */
 
-int tgpuOpVectorAdd(float *c, const float *a, const float *b,
-                    uint32_t count)
+int tgpuKernelVectorAdd(float *c, const float *a, const float *b,
+                        uint32_t count)
 {
-    return tgpuVectorAddFloat(c, a, b, count);
+    for (uint32_t i = 0; i < count; i++) {
+        c[i] = a[i] + b[i];
+    }
+    return 0;
 }
 
-/* ── 向量点积 ──────────────────────────────────── */
-
-float tgpuOpDot(const float *a, const float *b, int count)
+float tgpuKernelDot(const float *a, const float *b, int count)
 {
     float result = 0.0f;
     for (int i = 0; i < count; i++) {
@@ -122,18 +106,17 @@ float tgpuOpDot(const float *a, const float *b, int count)
     return result;
 }
 
-/* ── Conv2D (朴素, 微型实现) ────────────────────── */
+/* ── 卷积 ───────────────────────────────────────── */
 
-int tgpuOpConv2D(
+int tgpuKernelConv2D(
     const float *input, const float *kernel,
     float *output,
-    int H, int W,      /* 输入尺寸 */
-    int KH, int KW,    /* 卷积核尺寸 */
-    int C_in, int C_out /* 通道数 */
-)
+    int H, int W,
+    int KH, int KW,
+    int C_in, int C_out)
 {
-    int OH = H - KH + 1;  /* 输出高度 */
-    int OW = W - KW + 1;  /* 输出宽度 */
+    int OH = H - KH + 1;
+    int OW = W - KW + 1;
 
     memset(output, 0, C_out * OH * OW * sizeof(float));
 

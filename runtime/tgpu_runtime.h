@@ -1,31 +1,23 @@
 /*
- * tiny-gpu Runtime API (tgpu.h)
+ * tiny-gpu Runtime API (tgpu_runtime.h)
  *
- * 类 CUDA 编程接口，运行在用户态，底层调用 UMD。
+ * 命名规范: tgpu* — Runtime 层（设备管理、内存、提交任务）
+ *            tgpuKernel* — 算子层（具体计算逻辑，见 ops/operators.h）
  *
  * 典型用法：
  *
  *   #include "tgpu_runtime.h"
+ *   #include "../ops/operators.h"
  *
  *   float *a, *b, *c;
- *   int N = 1024;
- *
  *   tgpuInit();
  *   tgpuMalloc((void**)&a, N * sizeof(float));
- *   tgpuMalloc((void**)&b, N * sizeof(float));
- *   tgpuMalloc((void**)&c, N * sizeof(float));
+ *   tgpuMemcpy(a, host_a, N * sizeof(float));   // H2D
  *
- *   tgpuMemcpyH2D(a, host_a, N * sizeof(float));
- *   tgpuMemcpyH2D(b, host_b, N * sizeof(float));
+ *   tgpuKernelVectorAdd(c, a, b, N);             // 算子
+ *   tgpuMemcpy(host_c, c, N * sizeof(float));    // D2H
  *
- *   tgpuVectorAdd(c, a, b, N);
- *   tgpuSync();
- *
- *   tgpuMemcpyD2H(host_c, c, N * sizeof(float));
- *
- *   tgpuFree(a);
- *   tgpuFree(b);
- *   tgpuFree(c);
+ *   tgpuFree(a); tgpuFree(b); tgpuFree(c);
  *   tgpuShutdown();
  */
 
@@ -41,7 +33,7 @@ extern "C" {
 
 /* ── 设备管理 ──────────────────────────────────── */
 
-/** 初始化 tiny-gpu 设备 */
+/** 初始化 tiny-gpu 设备，返回 0 成功 */
 int tgpuInit(void);
 
 /** 关闭 tiny-gpu 设备 */
@@ -49,44 +41,34 @@ void tgpuShutdown(void);
 
 /* ── 内存管理 ──────────────────────────────────── */
 
-/** 分配 "device memory" (实际是用户态 malloc, 模拟显存) */
+/** 分配设备内存（当前为 host malloc，将来可改为设备显存） */
 int tgpuMalloc(void **ptr, size_t size);
 
-/** 释放 "device memory" */
+/** 释放设备内存 */
 void tgpuFree(void *ptr);
 
-/** 拷贝数据 Host → Device */
-int tgpuMemcpyH2D(void *dst, const void *src, size_t size);
+/** 拷贝数据（Host ↔ Device 双向，当前均为 host 内存直接操作） */
+int tgpuMemcpy(void *dst, const void *src, size_t size);
 
-/** 拷贝数据 Device → Host */
-int tgpuMemcpyD2H(void *dst, const void *src, size_t size);
+/* ── 任务提交 ──────────────────────────────────── */
 
-/* ── 算子 API ──────────────────────────────────── */
+/**
+ * 向设备提交一个计算任务。
+ * 当前设备仅支持固定操作码，未来支持可编程 kernel。
+ *
+ * opcode: 0=COPY, 1=VADD, 2=VMUL
+ */
+int tgpuLaunch(void *dst, const void *src, uint32_t size, uint32_t opcode);
 
-/** 向量加法: C = A + B (uint32_t) */
-int tgpuVectorAdd(void *c, const void *a, const void *b,
-                  uint32_t count);
-
-/** 向量加法: C = A + B (float) */
-int tgpuVectorAddFloat(void *c, const void *a, const void *b,
-                       uint32_t count);
-
-/** 向量乘法: C = A * B (uint32_t) */
-int tgpuVectorMul(void *c, const void *a, const void *b,
-                  uint32_t count);
-
-/** 内存拷贝 (device → device, 通过 QEMU 设备) */
-int tgpuDeviceCopy(void *dst, const void *src, size_t size);
-
-/** 等待所有提交的任务完成 */
+/** 等待所有已提交的任务完成 */
 int tgpuSync(void);
 
 /* ── 工具 ──────────────────────────────────────── */
 
-/** 获取设备状态字符串 */
+/** 获取设备状态字符串: "idle" / "busy" / "done" / "unknown" */
 const char* tgpuGetStatusStr(void);
 
-/** 获取驱动版本信息 */
+/** 获取驱动版本 */
 void tgpuGetVersion(int *major, int *minor);
 
 #ifdef __cplusplus

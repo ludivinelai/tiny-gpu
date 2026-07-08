@@ -1,55 +1,54 @@
 /*
  * tiny-gpu 基础测试
  *
- * 测试整个通路：Runtime → UMD → KMD → QEMU 虚拟设备
+ * 测试 Runtime（设备管理 + 内存 + tgpuLaunch） → UMD → KMD → QEMU 虚拟设备
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 #include "../runtime/tgpu_runtime.h"
 
 #define TEST_SIZE  256
 
-static int test_vector_add(void)
+static int test_device_init(void)
 {
-    printf("[TEST] vector_add (N=%d)... ", TEST_SIZE);
-
-    uint32_t *a, *b, *c;
-    uint32_t host_a[TEST_SIZE], host_b[TEST_SIZE], host_c[TEST_SIZE];
-
-    /* 准备数据 */
-    for (int i = 0; i < TEST_SIZE; i++) {
-        host_a[i] = i;
-        host_b[i] = i * 2;
+    printf("[TEST] device_init... ");
+    if (tgpuInit() < 0) {
+        printf("SKIP (no /dev/tiny-gpu)\n");
+        return -1;
     }
+    printf("PASS (%s)\n", tgpuGetStatusStr());
+    return 0;
+}
 
-    /* 分配 "device" 内存 */
-    tgpuMalloc((void**)&a, TEST_SIZE * sizeof(uint32_t));
-    tgpuMalloc((void**)&b, TEST_SIZE * sizeof(uint32_t));
-    tgpuMalloc((void**)&c, TEST_SIZE * sizeof(uint32_t));
+static int test_launch_vadd(void)
+{
+    printf("[TEST] tgpuLaunch(VADD, N=%d)... ", TEST_SIZE);
 
-    /* 拷贝到 device */
-    tgpuMemcpyH2D(a, host_a, TEST_SIZE * sizeof(uint32_t));
-    tgpuMemcpyH2D(b, host_b, TEST_SIZE * sizeof(uint32_t));
+    uint32_t *src, *dst;
+    uint32_t host_src[TEST_SIZE], host_dst[TEST_SIZE];
 
-    /* 提交计算 */
-    int ret = tgpuVectorAdd(c, a, b, TEST_SIZE);
+    for (int i = 0; i < TEST_SIZE; i++)
+        host_src[i] = i;
+
+    tgpuMalloc((void**)&src, TEST_SIZE * sizeof(uint32_t));
+    tgpuMalloc((void**)&dst, TEST_SIZE * sizeof(uint32_t));
+
+    tgpuMemcpy(src, host_src, TEST_SIZE * sizeof(uint32_t));
+
+    int ret = tgpuLaunch(dst, src, TEST_SIZE * sizeof(uint32_t), 1 /* VADD */);
     if (ret < 0) {
-        printf("FAIL (tgpuVectorAdd returned %d)\n", ret);
+        printf("FAIL (launch returned %d)\n", ret);
         goto cleanup;
     }
 
-    /* 读回结果 */
-    tgpuMemcpyD2H(host_c, c, TEST_SIZE * sizeof(uint32_t));
+    tgpuMemcpy(host_dst, dst, TEST_SIZE * sizeof(uint32_t));
 
-    /* 验证 */
     for (int i = 0; i < TEST_SIZE; i++) {
-        uint32_t expected = i + i * 2;
-        if (host_c[i] != expected) {
-            printf("FAIL at index %d: got %u, expected %u\n",
-                   i, host_c[i], expected);
+        if (host_dst[i] != host_src[i] + (i % 10)) {
+            printf("FAIL at %d: got %u, expected %u\n",
+                   i, host_dst[i], host_src[i] + (i % 10));
             goto cleanup;
         }
     }
@@ -57,44 +56,38 @@ static int test_vector_add(void)
     printf("PASS\n");
 
 cleanup:
-    tgpuFree(a);
-    tgpuFree(b);
-    tgpuFree(c);
+    tgpuFree(src);
+    tgpuFree(dst);
     return 0;
 }
 
-static int test_vector_mul(void)
+static int test_launch_vmul(void)
 {
-    printf("[TEST] vector_mul (N=%d)... ", TEST_SIZE);
+    printf("[TEST] tgpuLaunch(VMUL, N=%d)... ", TEST_SIZE);
 
-    uint32_t *a, *b, *c;
-    uint32_t host_a[TEST_SIZE], host_b[TEST_SIZE], host_c[TEST_SIZE];
+    uint32_t *src, *dst;
+    uint32_t host_src[TEST_SIZE], host_dst[TEST_SIZE];
 
-    for (int i = 0; i < TEST_SIZE; i++) {
-        host_a[i] = i + 1;
-        host_b[i] = 3;
-    }
+    for (int i = 0; i < TEST_SIZE; i++)
+        host_src[i] = i + 1;
 
-    tgpuMalloc((void**)&a, TEST_SIZE * sizeof(uint32_t));
-    tgpuMalloc((void**)&b, TEST_SIZE * sizeof(uint32_t));
-    tgpuMalloc((void**)&c, TEST_SIZE * sizeof(uint32_t));
+    tgpuMalloc((void**)&src, TEST_SIZE * sizeof(uint32_t));
+    tgpuMalloc((void**)&dst, TEST_SIZE * sizeof(uint32_t));
 
-    tgpuMemcpyH2D(a, host_a, TEST_SIZE * sizeof(uint32_t));
-    tgpuMemcpyH2D(b, host_b, TEST_SIZE * sizeof(uint32_t));
+    tgpuMemcpy(src, host_src, TEST_SIZE * sizeof(uint32_t));
 
-    int ret = tgpuVectorMul(c, a, b, TEST_SIZE);
+    int ret = tgpuLaunch(dst, src, TEST_SIZE * sizeof(uint32_t), 2 /* VMUL */);
     if (ret < 0) {
-        printf("FAIL (tgpuVectorMul returned %d)\n", ret);
+        printf("FAIL (launch returned %d)\n", ret);
         goto cleanup;
     }
 
-    tgpuMemcpyD2H(host_c, c, TEST_SIZE * sizeof(uint32_t));
+    tgpuMemcpy(host_dst, dst, TEST_SIZE * sizeof(uint32_t));
 
     for (int i = 0; i < TEST_SIZE; i++) {
-        uint32_t expected = (i + 1) * 3;
-        if (host_c[i] != expected) {
-            printf("FAIL at index %d: got %u, expected %u\n",
-                   i, host_c[i], expected);
+        if (host_dst[i] != host_src[i] * (i % 10 + 1)) {
+            printf("FAIL at %d: got %u, expected %u\n",
+                   i, host_dst[i], host_src[i] * (i % 10 + 1));
             goto cleanup;
         }
     }
@@ -102,15 +95,14 @@ static int test_vector_mul(void)
     printf("PASS\n");
 
 cleanup:
-    tgpuFree(a);
-    tgpuFree(b);
-    tgpuFree(c);
+    tgpuFree(src);
+    tgpuFree(dst);
     return 0;
 }
 
-static int test_device_copy(void)
+static int test_launch_copy(void)
 {
-    printf("[TEST] device_copy (N=%d)... ", TEST_SIZE);
+    printf("[TEST] tgpuLaunch(COPY, N=%d)... ", TEST_SIZE);
 
     uint8_t *src, *dst;
     uint8_t host_src[TEST_SIZE], host_dst[TEST_SIZE];
@@ -121,19 +113,19 @@ static int test_device_copy(void)
     tgpuMalloc((void**)&src, TEST_SIZE);
     tgpuMalloc((void**)&dst, TEST_SIZE);
 
-    tgpuMemcpyH2D(src, host_src, TEST_SIZE);
+    tgpuMemcpy(src, host_src, TEST_SIZE);
 
-    int ret = tgpuDeviceCopy(dst, src, TEST_SIZE);
+    int ret = tgpuLaunch(dst, src, TEST_SIZE, 0 /* COPY */);
     if (ret < 0) {
-        printf("FAIL (tgpuDeviceCopy returned %d)\n", ret);
+        printf("FAIL (launch returned %d)\n", ret);
         goto cleanup;
     }
 
-    tgpuMemcpyD2H(host_dst, dst, TEST_SIZE);
+    tgpuMemcpy(host_dst, dst, TEST_SIZE);
 
     for (int i = 0; i < TEST_SIZE; i++) {
         if (host_dst[i] != host_src[i]) {
-            printf("FAIL at index %d: got %u, expected %u\n",
+            printf("FAIL at %d: got %u, expected %u\n",
                    i, host_dst[i], host_src[i]);
             goto cleanup;
         }
@@ -149,23 +141,19 @@ cleanup:
 
 int main(void)
 {
-    printf("\n╔══════════════════════════════════╗\n");
-    printf("║   tiny-gpu: Basic Test Suite    ║\n");
-    printf("╚══════════════════════════════════╝\n\n");
+    printf("\n=== tiny-gpu: Runtime Test Suite ===\n\n");
 
-    if (tgpuInit() < 0) {
-        printf("SKIP: /dev/tiny-gpu not available\n");
-        printf("      (expected on host - run inside Linux VM)\n");
+    if (test_device_init() < 0) {
+        printf("(run inside Linux VM with /dev/tiny-gpu)\n");
         return 0;
     }
 
-    printf("device status: %s\n\n", tgpuGetStatusStr());
+    printf("\n");
+    test_launch_vadd();
+    test_launch_vmul();
+    test_launch_copy();
 
-    test_vector_add();
-    test_vector_mul();
-    test_device_copy();
-
-    printf("\nAll tests complete!\n");
+    printf("\nAll runtime tests complete!\n");
     tgpuShutdown();
     return 0;
 }
