@@ -1,0 +1,40 @@
+# Build artifacts
+*.o
+*.a
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+*.order
+*.symvers
+test_basic
+test_matmul
+libtgpu.a
+libtgpu_runtime.a
+libtgpu_ops.a
+
+# QEMU build
+qemu-src/
+qemu-build/
+qemu_build/
+
+# VM images and ISOs
+vm/*.img
+vm/*.iso
+vm/*.qcow2
+vm/*.vhd
+vm/vmlinuz
+vm/initramfs
+vm/modloop*
+vm/apks/
+vm/boot/
+vm/edk2-*
+
+# macOS
+.DS_Store
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
