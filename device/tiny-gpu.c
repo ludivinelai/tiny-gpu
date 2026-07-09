@@ -205,6 +205,7 @@ static void tiny_gpu_realize(PCIDevice *pdev, Error **errp)
     pci_config_set_vendor_id(pdev->config, TINY_GPU_VENDOR_ID);
     pci_config_set_device_id(pdev->config, TINY_GPU_DEVICE_ID);
     pci_config_set_class(pdev->config, PCI_CLASS_OTHERS);
+    pdev->config[0x3d] = 1;  /* Interrupt PIN = INTA */
 
     memory_region_init_io(&s->mmio, OBJECT(s), &tiny_gpu_mmio_ops, s,
                           "tiny-gpu-mmio", TINY_GPU_BAR0_SIZE);
